@@ -20,7 +20,7 @@
     "CNY",
   ];
 
-  const CHART_CODES = ["EUR", "GBP", "JPY", "CAD", "AUD", "CHF"];
+  const SPOTLIGHT_CODES = ["EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "RWF", "KES"];
 
   const FLAG_OVERRIDES = {
     EUR: "🇪🇺",
@@ -221,13 +221,8 @@
     overviewValue: document.getElementById("overview-value"),
     overviewPairLabel: document.getElementById("overview-pair-label"),
     overviewCount: document.getElementById("overview-count"),
-    chartGrid: document.getElementById("chart-grid"),
-    chartArea: document.getElementById("chart-area"),
-    chartLineA: document.getElementById("chart-line-a"),
-    chartLineB: document.getElementById("chart-line-b"),
-    chartDotA: document.getElementById("chart-dot-a"),
-    chartDotB: document.getElementById("chart-dot-b"),
-    chartLabels: document.getElementById("chart-labels"),
+    spotlightBase: document.getElementById("spotlight-base"),
+    spotlightList: document.getElementById("spotlight-list"),
     quickPicks: document.getElementById("quick-picks"),
     baseSearch: document.getElementById("base-search"),
     baseCurrency: document.getElementById("base-currency"),
@@ -386,8 +381,8 @@
     codes = Array.isArray(data.supported_codes) ? data.supported_codes : [];
     nameByCode = Object.fromEntries(codes);
 
-    fillSelect(els.fromCurrency, "USD");
-    fillSelect(els.toCurrency, "EUR");
+    fillSelect(els.fromCurrency, "RWF");
+    fillSelect(els.toCurrency, "UGX");
     fillSelect(els.baseCurrency, "USD");
 
     if (!nameByCode[els.fromCurrency.value] && codes[0]) {
@@ -469,7 +464,7 @@
   }
 
   // -------------------------------------------------------------------------
-  // Overview + chart
+  // Overview + spotlight rates
   // -------------------------------------------------------------------------
 
   function updateOverview() {
@@ -490,103 +485,52 @@
       els.overviewCount,
       `${ratesRows.length.toLocaleString()} currencies`
     );
-    renderChart();
+    renderSpotlight();
   }
 
-  function buildSeries(seedCodes) {
-    const values = seedCodes
-      .map((code) => latestRates[code])
-      .filter((v) => Number.isFinite(v) && v > 0);
+  function renderSpotlight() {
+    const base = els.baseCurrency.value || "USD";
+    setText(els.spotlightBase, base);
+    els.spotlightList.textContent = "";
 
-    if (values.length < 2) {
-      // Decorative fallback so the card never looks empty
-      return [1.02, 1.08, 0.97, 1.12, 1.05, 1.18];
+    const rows = SPOTLIGHT_CODES.filter(
+      (code) => code !== base && Number.isFinite(latestRates[code])
+    )
+      .slice(0, 5)
+      .map((code) => ({
+        code,
+        name: nameByCode[code] || code,
+        rate: latestRates[code],
+      }));
+
+    if (rows.length === 0) {
+      const empty = document.createElement("li");
+      setText(empty, "Rates unavailable");
+      els.spotlightList.appendChild(empty);
+      return;
     }
 
-    const max = Math.max(...values);
-    return values.map((v) => v / max);
-  }
+    for (const row of rows) {
+      const li = document.createElement("li");
 
-  function pointsToPath(points, width, height, padX, padY) {
-    if (!points.length) return "";
-    return points
-      .map((p, i) => {
-        const x =
-          padX + (i / Math.max(points.length - 1, 1)) * (width - padX * 2);
-        const y = padY + (1 - p) * (height - padY * 2);
-        return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
-      })
-      .join(" ");
-  }
+      const left = document.createElement("span");
+      left.className = "spotlight-code";
+      const flag = document.createElement("span");
+      flag.setAttribute("aria-hidden", "true");
+      setText(flag, flagFor(row.code));
+      const code = document.createElement("span");
+      setText(code, row.code);
+      const name = document.createElement("span");
+      name.className = "spotlight-name";
+      setText(name, row.name);
+      left.append(flag, code, name);
 
-  function renderChart() {
-    const width = 360;
-    const height = 140;
-    const padX = 8;
-    const padY = 16;
+      const rate = document.createElement("span");
+      rate.className = "spotlight-rate";
+      setText(rate, formatRate(row.rate));
 
-    const seriesA = buildSeries(
-      CHART_CODES.filter((c) => c !== els.baseCurrency.value)
-    );
-    const seriesB = buildSeries(
-      [...CHART_CODES].reverse().filter((c) => c !== els.baseCurrency.value)
-    );
-
-    // Soft grid lines
-    els.chartGrid.textContent = "";
-    for (let i = 0; i < 4; i++) {
-      const y = padY + ((height - padY * 2) * i) / 3;
-      const line = document.createElementNS(
-        "http://www.w3.org/2000/svg",
-        "line"
-      );
-      line.setAttribute("x1", "0");
-      line.setAttribute("x2", String(width));
-      line.setAttribute("y1", String(y));
-      line.setAttribute("y2", String(y));
-      line.setAttribute("stroke", "currentColor");
-      line.setAttribute("stroke-opacity", "0.08");
-      line.setAttribute("stroke-width", "1");
-      els.chartGrid.appendChild(line);
-    }
-
-    const pathA = pointsToPath(seriesA, width, height, padX, padY);
-    const pathB = pointsToPath(seriesB, width, height, padX, padY);
-    els.chartLineA.setAttribute("d", pathA);
-    els.chartLineB.setAttribute("d", pathB);
-
-    if (pathA) {
-      const lastX =
-        padX +
-        ((seriesA.length - 1) / Math.max(seriesA.length - 1, 1)) *
-          (width - padX * 2);
-      const lastY = padY + (1 - seriesA[seriesA.length - 1]) * (height - padY * 2);
-      const firstY = padY + (1 - seriesA[0]) * (height - padY * 2);
-      els.chartArea.setAttribute(
-        "d",
-        `${pathA} L${lastX},${height - padY} L${padX},${height - padY} L${padX},${firstY} Z`
-      );
-      els.chartDotA.setAttribute("cx", String(lastX));
-      els.chartDotA.setAttribute("cy", String(lastY));
-    }
-
-    if (seriesB.length) {
-      const lastX =
-        padX +
-        ((seriesB.length - 1) / Math.max(seriesB.length - 1, 1)) *
-          (width - padX * 2);
-      const lastY =
-        padY + (1 - seriesB[seriesB.length - 1]) * (height - padY * 2);
-      els.chartDotB.setAttribute("cx", String(lastX));
-      els.chartDotB.setAttribute("cy", String(lastY));
-    }
-
-    const labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    els.chartLabels.textContent = "";
-    for (const label of labels) {
-      const span = document.createElement("span");
-      span.textContent = label;
-      els.chartLabels.appendChild(span);
+      li.append(left, rate);
+      els.spotlightList.appendChild(li);
     }
   }
 
@@ -640,7 +584,7 @@
       setText(els.convertErrorMessage, error.message || "Conversion failed.");
       setHidden(els.convertError, false);
     } finally {
-      setHidden(els.convertLoading, false);
+      setHidden(els.convertLoading, true);
       els.convertBtn.disabled = false;
       updateConvertChrome();
     }
