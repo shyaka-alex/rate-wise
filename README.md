@@ -93,21 +93,23 @@ curl -sI http://localhost:3000/health | grep -i x-served-by
 
 Repeat these steps on **both** Web01 and Web02 so both serve the same app.
 
-### 1. Install Node.js
+> Note: on the shared course servers port 80 is already used by another project, so Nginx for Rate Wise listens on **8080**. On a dedicated server you can keep `listen 80` instead and remove the default site.
+
+### 1. Install Node.js, git and PM2
 
 ```bash
-# Example for Ubuntu/Debian
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs git
+sudo npm install -g pm2
 node -v && npm -v
 ```
 
 ### 2. Clone and install
 
 ```bash
-git clone <YOUR_GITHUB_REPO_URL>
+git clone https://github.com/shyaka-alex/rate-wise.git
 cd rate-wise
-npm install --production
+npm install
 ```
 
 ### 3. Configure secrets
@@ -115,21 +117,21 @@ npm install --production
 ```bash
 cp .env.example .env
 nano .env   # set API_KEY and PORT=3000
+chmod 600 .env
 ```
 
-Never commit `.env`. Keep the key only on the servers (and in the assignment comment section as required).
+Never commit `.env`. Keep the key only on the servers (and in the assignment comment section as required). I copied the `.env` from Web01 to Web02 with `scp` so the key was never typed or printed again.
 
 ### 4. Run with PM2
 
 ```bash
-sudo npm install -g pm2
-pm2 start deploy/ecosystem.config.js
+pm2 start server.js --name rate-wise
 pm2 save
-pm2 startup
-# Run the command PM2 prints so the process restarts on reboot
+sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u ubuntu --hp /home/ubuntu
+pm2 save
 ```
 
-Useful PM2 commands:
+The `startup` line makes PM2 restart the app after a reboot. Useful PM2 commands:
 
 ```bash
 pm2 status
@@ -137,28 +139,34 @@ pm2 logs rate-wise
 pm2 restart rate-wise
 ```
 
-### 5. Configure Nginx
+### 5. Configure Nginx (port 8080)
 
 ```bash
 sudo apt-get install -y nginx
 sudo cp deploy/nginx-webserver.conf /etc/nginx/sites-available/rate-wise
+sudo sed -i '/listen \[::\]:80 default_server;/d; s/listen 80 default_server;/listen 8080;/' /etc/nginx/sites-available/rate-wise
 sudo ln -sf /etc/nginx/sites-available/rate-wise /etc/nginx/sites-enabled/rate-wise
-# Disable the default site if it conflicts:
-sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
-sudo systemctl reload nginx
+sudo service nginx reload
 ```
 
 Verify on each web server:
 
 ```bash
-curl -s http://127.0.0.1/health
-curl -sI http://127.0.0.1/health | grep -i x-served-by
+curl -s http://127.0.0.1:8080/health
 ```
+
+The answer contains the name of the server, for example `{"status":"ok","server":"7406-web-02"}`.
 
 ---
 
 ## Load balancer setup (Lb01)
+
+```
+Browser --> Lb01 (HAProxy, port 8080, round robin + /health checks)
+              |--> Web01: Nginx :8080 --> Node.js app :3000 (PM2)
+              |--> Web02: Nginx :8080 --> Node.js app :3000 (PM2)
+```
 
 ### 1. Install HAProxy
 
@@ -167,30 +175,42 @@ sudo apt-get update
 sudo apt-get install -y haproxy
 ```
 
-### 2. Apply config
+### 2. Add the Rate Wise frontend and backend
 
-1. Copy `deploy/haproxy.cfg` to `/etc/haproxy/haproxy.cfg` (or merge carefully with the existing file).
-2. Replace `WEB01_IP` and `WEB02_IP` with the real IPs of Web01 and Web02.
-3. Validate and restart:
+Append this to `/etc/haproxy/haproxy.cfg`:
+
+```
+frontend ratewise
+    bind *:8080
+    default_backend ratewise-backend
+
+backend ratewise-backend
+    balance roundrobin
+    option httpchk GET /health
+    server 7406-web-01 18.130.189.158:8080 check
+    server 7406-web-02 13.135.103.225:8080 check
+```
+
+Validate and reload:
 
 ```bash
 sudo haproxy -c -f /etc/haproxy/haproxy.cfg
-sudo systemctl restart haproxy
-sudo systemctl enable haproxy
+sudo service haproxy reload
 ```
+
+HAProxy uses the `roundrobin` algorithm and the `/health` endpoint to stop sending requests to a server that is down.
 
 ### 3. Test traffic distribution
 
-From your laptop (or Lb01):
+From your laptop:
 
 ```bash
-# Replace LB01_IP with the load balancer address
 for i in 1 2 3 4 5 6 7 8; do
-  curl -sI http://LB01_IP/health | grep -i x-served-by
+  curl -s http://18.170.51.74:8080/health; echo
 done
 ```
 
-You should see hostnames alternating between Web01 and Web02 (round-robin). Also open the LB URL in a browser and confirm the footer “Served by …” updates across refreshes / requests.
+You should see `7406-web-01` and `7406-web-02` alternating. Also open `http://18.170.51.74:8080` in a browser and reload: the footer "Served by ..." changes between the two servers.
 
 ---
 
@@ -251,24 +271,34 @@ Cache is in-memory (per server process). Responses include `"cached": true` when
 
 ## Challenges faced
 
-<!-- Fill these in with your own experience before submission -->
+1. **Challenge:** Pushing the project from the wrong folder and with the wrong GitHub account.
+   **Solution:** I fixed the remote and the active account, and checked that `.env` is excluded from git before every push.
 
-1. **Challenge:** _[e.g. keeping the API key out of the browser while still supporting convert + rates]_  
-   **Solution:** _[...]_
+2. **Challenge:** The first version of the weekly chart used data that was not real.
+   **Solution:** I replaced it with the real top rates returned by the API.
 
-2. **Challenge:** _[e.g. proving load balancing between Web01 and Web02]_  
-   **Solution:** _[...]_
+3. **Challenge:** The "Converting..." spinner never stopped in some cases.
+   **Solution:** I fixed the loading state so it always clears when the request finishes.
 
-3. **Challenge:** _[e.g. handling API quota / timeouts gracefully]_  
-   **Solution:** _[...]_
+4. **Challenge:** Keeping the API key secret.
+   **Solution:** The backend reads the key from `.env`, which is never committed. I copied it between servers with `scp` instead of typing it again.
+
+5. **Challenge:** Proving that the load balancer really splits traffic between Web01 and Web02.
+   **Solution:** `/health` returns the name of the server and the footer shows "Served by ...". A `curl` loop through HAProxy alternates between the two servers.
+
+6. **Challenge:** Port 80 was already used by another course project on the same servers.
+   **Solution:** I moved Rate Wise to Nginx port 8080 and gave Lb01 a second listener on port 8080, so both projects work at the same time.
+
+7. **Challenge:** Keeping the app running after a crash or a reboot.
+   **Solution:** PM2 with a systemd startup script restarts it automatically.
 
 ---
 
 ## Links
 
-- **Demo video:** _[YouTube / Vimeo URL]_
-- **Live site (via load balancer):** _[http://LB01_IP or domain]_
-- **GitHub repository:** _[https://github.com/YOUR_USERNAME/rate-wise]_
+- **Demo video:** ADD_YOUTUBE_LINK_HERE
+- **Live site (via load balancer):** http://18.170.51.74:8080
+- **GitHub repository:** https://github.com/shyaka-alex/rate-wise
 
 ---
 
