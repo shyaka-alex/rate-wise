@@ -60,7 +60,7 @@ The app uses [ExchangeRate-API](https://www.exchangerate-api.com/) on the server
 
 ```bash
 # 1. Clone the repository
-git clone <YOUR_GITHUB_REPO_URL>
+git clone https://github.com/shyaka-alex/rate-wise.git
 cd rate-wise
 
 # 2. Install dependencies
@@ -296,7 +296,7 @@ Cache is in-memory (per server process). Responses include `"cached": true` when
 
 ## Links
 
-- **Demo video:** ADD_YOUTUBE_LINK_HERE
+- **Demo video:** https://youtu.be/N0bg10AGPL0
 - **Live site (via load balancer):** http://18.170.51.74:8080
 - **GitHub repository:** https://github.com/shyaka-alex/rate-wise
 
